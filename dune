@@ -1,0 +1,3 @@
+(executable
+ (name img)
+ (libraries bimage bimage-io bimage-unix))
