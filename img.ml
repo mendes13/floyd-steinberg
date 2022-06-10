@@ -38,8 +38,7 @@ module Image : sig
 
   val set_image : t -> string -> unit
 
-  (* TODO: use Pixel.t instead of int -> int *)
-  val for_each_pixel : t -> (int -> int -> unit) -> unit
+  val for_each_pixel : t -> (Pixel.t -> unit) -> unit
 end
 =
 struct
@@ -81,7 +80,7 @@ struct
     Bimage_unix.Magick.write file_path image
 
   let for_each_pixel image fn =
-    Bimage.Image.for_each (fun x y _ -> fn x y) image
+    Bimage.Image.for_each (fun x y _ -> fn (pixel_at image x y)) image
 end
 
 module IO : sig
@@ -116,60 +115,57 @@ let calculate_error old_pixel new_pixel =
   let (nr, ng, nb) = new_pixel.rgb in
   (r-nr, g-ng, b-nb)
 
-let dither_ngbh pixel error ratio =
-  let open Pixel in
-  let error_float = map_triple error Float.of_int in
-  let multiplied_by_ratio = map_triple error_float (Float.mul ratio) in
-  let mult_int = map_triple multiplied_by_ratio Int.of_float in
-  let result = sum_triples pixel.rgb (mult_int) in
+module Dithering : sig
+  val dither : Image.t -> Pixel.t -> unit
+end
+=
+struct
+  let calculate_neighbor_correction pixel error ratio =
+    let open Pixel in
+    let error_float = map_triple error Float.of_int in
+    let multiplied_by_ratio = map_triple error_float (Float.mul ratio) in
+    let mult_int = map_triple multiplied_by_ratio Int.of_float in
+    let result = sum_triples pixel.rgb (mult_int) in
+  
+    { x = pixel.x ; y = pixel.y ; rgb = result }
 
-  { x = pixel.x ; y = pixel.y ; rgb = result }
+  let set_neighbor_correction image x y ratio error =
 
-let do_it x y ratio error get set =
-  let pixel = (get x y) in
-  set x y (dither_ngbh pixel error ratio);
-  ()
+    let pixel = (Image.pixel_at image x y) in
+    let new_pixel = calculate_neighbor_correction pixel error ratio in
+    Image.set_pixel_at image x y new_pixel
 
-let dither_neighbors x y error get set =
-  do_it (x+1) y (7.0 /. 16.0) error get set;
-  do_it (x-1) (y+1) (3.0 /. 16.0) error get set;
-  do_it x (y+1) (5.0 /. 16.0) error get set;
-  do_it (x+1) (y+1) (1.0 /. 16.0) error get set;
-  ()
+  let dither_neighbors image pixel error =
+    let open Pixel in
 
-let debug_dither_neighbors x y error get set =
-  if x < 5 || y < 5 then
-    (print_string ((string_of_int x) ^ "," ^  (string_of_int y) ^ "\n");
-    dither_neighbors x y error get set)
-  else
-    ()
+    (* TODO: refactor *)
+    let dimensions = Image.get_dimensions image in
+    if pixel.x == (dimensions.w-1) || pixel.y == (dimensions.h-1) || pixel.x == 0
+        then ()
+    else
+        let x = pixel.x in
+        let y = pixel.y in
+        set_neighbor_correction image (x+1) (y  ) (7.0 /. 16.0) error;
+        set_neighbor_correction image (x-1) (y+1) (3.0 /. 16.0) error;
+        set_neighbor_correction image (x  ) (y+1) (5.0 /. 16.0) error;
+        set_neighbor_correction image (x+1) (y+1) (1.0 /. 16.0) error
 
-(* TODO: handle first column and row *)
-let floyd_steinberg (pixel : Pixel.t) x y get set =
-  let old_pixel = pixel in
-  let new_pixel = find_closest_palette_color old_pixel in
-  (* TODO move side effect away *)
-  set x y new_pixel;
-  let error = calculate_error old_pixel new_pixel in
-  dither_neighbors x y error get set
-
-let apply_floyd_steinberg image dimensions x y =
-  let open Image in
-  if x == (dimensions.w-1) || y == (dimensions.h-1) || x == 0
-     then ()
-  else
-    let pixel = pixel_at image x y in
-    floyd_steinberg pixel x y (pixel_at image) (set_pixel_at image);
-    ()
+  let dither image pixel =
+    let old_pixel = pixel in
+    let new_pixel = find_closest_palette_color old_pixel in
+    (* TODO move side effect away *)
+    Image.set_pixel_at image pixel.x pixel.y new_pixel;
+    let error = calculate_error old_pixel new_pixel in
+    dither_neighbors image pixel error
+end
 
 let main =
   match IO.get_image "input/img.jpg" with
   | None -> failwith ("Error loading image")
   | Some img ->
      let dest = Image.copy img in
-     let dimensions = Image.get_dimensions dest in
      let () =
-       Image.for_each_pixel dest (fun x y -> apply_floyd_steinberg dest dimensions x y)
+       Image.for_each_pixel dest (fun pixel -> Dithering.dither dest pixel)
      in
      IO.set_image dest "output/floydsteinberg-4.jpg"
 
