@@ -1,24 +1,104 @@
-open Bimage
-open Bimage_unix
+module MyPixel = struct
+  type t =
+    {
+        x : int;
+        y : int;
+        rgb : (int * int * int);
+    }
+end
 
-type my_pixel =
-  {
-    x : int;
-    y : int;
-    rgb : (int * int * int);
-  }
+module FilePath : sig
+  type t
 
-let print_pixel (r, g, b) =
-  print_string ((string_of_int r) ^ "," ^  (string_of_int g) ^ "," ^ (string_of_int b))
+  val of_string : string -> t
+end
+=
+struct
+  type t = string
 
-let print_pixel_float (r, g, b) =
-  print_string ((string_of_float r) ^ "," ^  (string_of_float g) ^ "," ^ (string_of_float b))
+  let of_string s = s
+end
 
+module MyImage : sig
+  type t
+
+  type dimensions = { w : int; h : int }
+
+  val pixel_at : t -> int -> int -> MyPixel.t
+
+  val set_pixel_at : t -> int -> int -> MyPixel.t -> unit
+
+  val copy : t -> t
+
+  val get_dimensions : t -> dimensions
+
+  (* TODO: this should be in an IO module *)
+  (* TODO: maybe use a abstraction for file_path instead of plain string *)
+  val get_image : string -> t option
+
+  val set_image : t -> string -> unit
+
+  (* TODO: use MyPixel.t instead of int -> int *)
+  val for_each_pixel : t -> (int -> int -> unit) -> unit
+end
+=
+struct
+  open Bimage
+  open MyPixel
+
+  type t = (int, u8, [`Rgb]) Bimage.Image.t
+
+  type dimensions = { w : int; h : int }
+
+  let pixel_at image x y =
+    let r = Image.get image x y 0 in
+    let g = Image.get image x y 1 in
+    let b = Image.get image x y 2 in
+    { x = x; y = y; rgb = (r, g, b) }
+
+  let set_pixel_at image x y pixel =
+    let (r, g, b) = pixel.rgb in
+    Image.set image x y 0 r;
+    Image.set image x y 1 g;
+    Image.set image x y 2 b;
+    ()
+
+  let copy image = Image.copy image
+
+  let get_dimensions image =
+    let (w, h, _) = Image.shape image in
+    { w = w; h = h }
+
+  let get_image file_path =
+    match Bimage_unix.Magick.read u8 rgb file_path with
+    | Ok img -> Some img
+    | Error _ -> None
+
+  let set_image image file_path =
+    Bimage_unix.Magick.write file_path image
+
+  let for_each_pixel image fn =
+    Image.for_each (fun x y _ -> fn x y) image
+end
+
+module IO : sig
+  val get_image : string -> MyImage.t option
+
+  val set_image : MyImage.t -> string -> unit
+end
+=
+struct
+  (* TODO: workaround, check how to fix this *)
+  let get_image = MyImage.get_image
+  let set_image = MyImage.set_image
+end
+  
 let map_triple (a, b, c) f = (f a, f b, f c)
 
 let sum_triples (a, b, c) (x, y, z) = (a+x, b+y, c+z)
 
 let find_closest_palette_color pixel =
+  let open MyPixel in
   let (r, g, b) = pixel.rgb in
   let f x =
     let x_int = Float.of_int x in
@@ -28,22 +108,17 @@ let find_closest_palette_color pixel =
   { x = pixel.x; y = pixel.y; rgb = (f r, f g, f b) }
 
 let calculate_error old_pixel new_pixel =
+  let open MyPixel in
   let (r, g, b) = old_pixel.rgb in
   let (nr, ng, nb) = new_pixel.rgb in
   (r-nr, g-ng, b-nb)
 
 let dither_ngbh pixel error ratio =
+  let open MyPixel in
   let error_float = map_triple error Float.of_int in
   let multiplied_by_ratio = map_triple error_float (Float.mul ratio) in
   let mult_int = map_triple multiplied_by_ratio Int.of_float in
   let result = sum_triples pixel.rgb (mult_int) in
-
-  (* if (pixel.x<3 && pixel.y<3) then ( *)
-  (*   print_string "error_float: "; print_pixel_float error_float; print_string "\n"; *)
-  (*   print_string "multiplied_by_ratio: "; print_pixel_float multiplied_by_ratio; print_string "\n"; *)
-  (*   print_string "result: "; print_pixel result; print_string "\n"; *)
-  (*   print_string "\n"; *)
-  (*  ); *)
 
   { x = pixel.x ; y = pixel.y ; rgb = result }
 
@@ -67,57 +142,32 @@ let debug_dither_neighbors x y error get set =
     ()
 
 (* TODO: handle first column and row *)
-let floyd_steinberg pixel x y get set =
+let floyd_steinberg (pixel : MyPixel.t) x y get set =
   let old_pixel = pixel in
   let new_pixel = find_closest_palette_color old_pixel in
   (* TODO move side effect away *)
   set x y new_pixel;
   let error = calculate_error old_pixel new_pixel in
-  (* if x<3 && y<3 *)
-  (* then ( *)
-  (*    print_string "old_pixel: "; print_pixel old_pixel.rgb; print_string "\n"; *)
-  (*    print_string "new_pixel: "; print_pixel new_pixel.rgb; print_string "\n"; *)
-  (*    print_string "error: "; print_pixel error; print_string "\n"; *)
-  (*    print_string "\n"; *)
-  (* ); *)
   dither_neighbors x y error get set
 
-let get_adapt dest x y =
-    let r = Image.get dest x y 0 in
-    let g = Image.get dest x y 1 in
-    let b = Image.get dest x y 2 in
-    { x = x; y = y; rgb = (r, g, b) }
-
-let set_adapt dest x y pixel_to_save =
-    let (r, g, b) = pixel_to_save.rgb in
-    Image.set dest x y 0 r;
-    Image.set dest x y 1 g;
-    Image.set dest x y 2 b;
+let apply_floyd_steinberg image dimensions x y =
+  let open MyImage in
+  if x == (dimensions.w-1) || y == (dimensions.h-1) || x == 0
+     then ()
+  else
+    let pixel = pixel_at image x y in
+    floyd_steinberg pixel x y (pixel_at image) (set_pixel_at image);
     ()
 
 let main =
-  let input_image =
-    match Magick.read u8 rgb "input/img.jpg" with
-    | Ok img -> img
-    | Error e -> failwith (Error.to_string e)
-  in
-
-  let dest = Image.copy input_image in
-  let (w, h, _) = Image.shape dest in
-
-  (* then print_string ((string_of_int x) ^ "," ^  (string_of_int y) ^ "\n") *)
-  let _ = Image.for_each (fun x y _px ->
-              if x == (w-1) || y == (h-1) || x == 0
-              then ()
-              else
-                let pixel = get_adapt dest x y in
-                floyd_steinberg pixel x y (fun x y -> get_adapt dest x y) (fun x y pixel_to_save ->
-                    set_adapt dest x y pixel_to_save;
-                    )
-                )
-    dest
-  in
-
-  Magick.write "output/floydsteinberg.jpg" dest
+  match IO.get_image "input/img.jpg" with
+  | None -> failwith ("Error loading image")
+  | Some img ->
+     let dest = MyImage.copy img in
+     let dimensions = MyImage.get_dimensions dest in
+     let () =
+       MyImage.for_each_pixel dest (fun x y -> apply_floyd_steinberg dest dimensions x y)
+     in
+     IO.set_image dest "output/floydsteinberg-4.jpg"
 
 let () = main
