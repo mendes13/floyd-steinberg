@@ -129,26 +129,27 @@ struct
   
     { x = pixel.x ; y = pixel.y ; rgb = result }
 
-  let set_neighbor_correction image x y ratio error =
-
+  let push_residual_quantization_error image x y ratio error =
     let pixel = (Image.pixel_at image x y) in
     let new_pixel = calculate_neighbor_correction pixel error ratio in
     Image.set_pixel_at image x y new_pixel
 
-  let dither_neighbors image pixel error =
+  let should_apply_dithering_to_neighbors image p =
     let open Pixel in
+    let d = Image.get_dimensions image in
+    p.x != (d.w-1) && p.y != (d.h-1) && p.x != 0
 
-    (* TODO: refactor *)
-    let dimensions = Image.get_dimensions image in
-    if pixel.x == (dimensions.w-1) || pixel.y == (dimensions.h-1) || pixel.x == 0
-        then ()
-    else
+  let dither_neighbors image pixel error =
+    if should_apply_dithering_to_neighbors image pixel
+       then
         let x = pixel.x in
         let y = pixel.y in
-        set_neighbor_correction image (x+1) (y  ) (7.0 /. 16.0) error;
-        set_neighbor_correction image (x-1) (y+1) (3.0 /. 16.0) error;
-        set_neighbor_correction image (x  ) (y+1) (5.0 /. 16.0) error;
-        set_neighbor_correction image (x+1) (y+1) (1.0 /. 16.0) error
+        push_residual_quantization_error image (x+1) (y  ) (7.0 /. 16.0) error;
+        push_residual_quantization_error image (x-1) (y+1) (3.0 /. 16.0) error;
+        push_residual_quantization_error image (x  ) (y+1) (5.0 /. 16.0) error;
+        push_residual_quantization_error image (x+1) (y+1) (1.0 /. 16.0) error
+    else 
+      ()
 
   let dither image pixel =
     let old_pixel = pixel in
@@ -164,9 +165,7 @@ let main =
   | None -> failwith ("Error loading image")
   | Some img ->
      let dest = Image.copy img in
-     let () =
-       Image.for_each_pixel dest (fun pixel -> Dithering.dither dest pixel)
-     in
+     Image.for_each_pixel dest (fun pixel -> Dithering.dither dest pixel);
      IO.set_image dest "output/floydsteinberg-4.jpg"
 
 let () = main
