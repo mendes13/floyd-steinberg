@@ -1,28 +1,36 @@
-module Pixel : sig
-  type t =
-    {
-        x : int;
-        y : int;
-        rgb : int * int * int;
-    }
+module Color : sig
+  type t
 
+  val of_triple : int * int * int -> t
+
+  val sum : t -> t -> t
+
+  val sub : t -> t -> t
+
+  val map : t -> f:(int -> int) -> t
+
+  val compress : t -> factor:int -> t
+end
+
+module Pixel : sig
   type position = int * int
 
-  (* TODO: create module probably *)
-  type rgb_color = int * int * int
+  type t
 
-  val rgb : t -> int * int * int
+  val position : t -> position
 
-  val create : position -> rgb_color -> t
+  val color : t -> Color.t
+
+  val create : position -> Color.t -> t
 end
 
 type t
 
 type dimensions = { w : int; h : int }
 
-val pixel_at : t -> int -> int -> Pixel.t
+val pixel_at : t -> Pixel.position -> Pixel.t
 
-val set_pixel_at : t -> int -> int -> Pixel.t -> unit
+val set_pixel_at : t -> Pixel.position -> Pixel.t -> unit
 
 val copy : t -> t
 
@@ -31,8 +39,6 @@ val get_dimensions : t -> dimensions
 val for_each_pixel : t -> (Pixel.t -> unit) -> unit
 
 module IO : sig
-
-(* TODO: maybe use a abstraction for file_path instead of plain string *)
   val get_image : string -> t option
   
   val set_image : t -> string -> unit

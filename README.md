@@ -16,12 +16,12 @@ $ dune exec ./src/main.ml input-image.jpg output-image.jpg
 
 </br>
 
-**No Dithering (3 bits per pixel):**
+**Color Compression - No Dithering (3 bits per pixel):**
 
 <img src="./tallinn-no-dithering.jpg" width="50%" height="50%" />
 </br>
 
-**Floyd-Steinberg Dithering (3 bits per pixel):**
+**Color Compression - Floyd-Steinberg Dithering (3 bits per pixel):**
 
 <img src="./tallinn-floyd-steinberg-dithering.jpg" width="50%" height="50%" />
 
